@@ -19,8 +19,10 @@ export default async function handler(req, res) {
     }
 
     const cleanOrderNumber = orderNumber.replace('#', '').trim();
+    const lowerEmail = email.toLowerCase();
     let order = null;
 
+    // Method 1: Try strict match with encoded hash
     try {
       const res1 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?name=%23${cleanOrderNumber}&limit=50`, {
         headers: {
@@ -29,11 +31,12 @@ export default async function handler(req, res) {
         }
       });
       const data1 = await res1.json();
-      order = data1.orders?.find(o => o.email?.toLowerCase() === email.toLowerCase());
+      order = data1.orders?.find(o => o.email?.toLowerCase() === lowerEmail);
     } catch (e) {
       console.log('Search method 1 failed:', e.message);
     }
 
+    // Method 2: Try unencoded name (Shopify sometimes returns results here too)
     if (!order) {
       try {
         const res2 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?name=${cleanOrderNumber}&limit=50`, {
@@ -43,54 +46,39 @@ export default async function handler(req, res) {
           }
         });
         const data2 = await res2.json();
-        order = data2.orders?.find(o => o.email?.toLowerCase() === email.toLowerCase());
+        order = data2.orders?.find(o => o.email?.toLowerCase() === lowerEmail);
       } catch (e) {
         console.log('Search method 2 failed:', e.message);
       }
     }
 
+    // Method 3: Fallback – search all orders from last 90 days
     if (!order) {
       try {
-// Method 3: Search all recent orders from last 90 days
-if (!order) {
-  try {
-    const fromDate = new Date();
-    fromDate.setDate(fromDate.getDate() - 90); // 90 days back
-    const isoDate = fromDate.toISOString();
+        const fromDate = new Date();
+        fromDate.setDate(fromDate.getDate() - 90);
+        const isoDate = fromDate.toISOString();
 
-    const res3 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?status=any&created_at_min=${isoDate}`, {
-      headers: {
-        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const data3 = await res3.json();
-    order = data3.orders?.find(o =>
-      (o.order_number?.toString() === cleanOrderNumber ||
-       o.name === `#${cleanOrderNumber}` ||
-       o.name === cleanOrderNumber) &&
-      o.email?.toLowerCase() === email.toLowerCase()
-    );
-  } catch (e) {
-    console.log('Search method 3 failed:', e.message);
-  }
-}          headers: {
+        const res3 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?status=any&created_at_min=${isoDate}&limit=250`, {
+          headers: {
             'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
             'Content-Type': 'application/json'
           }
         });
         const data3 = await res3.json();
+
         order = data3.orders?.find(o =>
-          (o.order_number?.toString() === cleanOrderNumber || o.name === `#${cleanOrderNumber}` || o.name === cleanOrderNumber) &&
-          o.email?.toLowerCase() === email.toLowerCase()
+          (o.order_number?.toString() === cleanOrderNumber ||
+           o.name === `#${cleanOrderNumber}` ||
+           o.name === cleanOrderNumber) &&
+          o.email?.toLowerCase() === lowerEmail
         );
       } catch (e) {
         console.log('Search method 3 failed:', e.message);
       }
     }
 
-    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (!order) return res.status(404).json({ error: 'Order not found or email does not match' });
 
     const hasPortraitProduct = order.line_items?.some(item =>
       item.title?.toLowerCase().includes('portrait') ||
