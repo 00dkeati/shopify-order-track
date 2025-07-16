@@ -11,59 +11,83 @@ export default async function handler(req, res) {
   const shop = process.env.SHOPIFY_SHOP;
   const accessToken = process.env.SHOPIFY_ADMIN_API_ACCESS_TOKEN;
 
+  let endCursor = null;
+  let hasNextPage = true;
+  let foundOrder = null;
+
   try {
-    // 1. Fetch recent orders matching email (use GraphQL to bypass pagination limits)
-    const query = `
-      {
-        orders(first: 10, query: "email:${email}", sortKey: CREATED_AT, reverse: true) {
-          edges {
-            node {
-              id
-              name
-              email
-              createdAt
-              totalPriceSet {
-                shopMoney {
-                  amount
-                  currencyCode
+    while (hasNextPage && !foundOrder) {
+      const query = `
+        {
+          orders(first: 50, after: ${endCursor ? `"${endCursor}"` : null}, reverse: true, sortKey: CREATED_AT) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            edges {
+              node {
+                id
+                name
+                email
+                createdAt
+                totalPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
                 }
-              }
-              events(first: 50) {
-                edges {
-                  node {
-                    message
-                    createdAt
+                events(first: 50) {
+                  edges {
+                    node {
+                      message
+                      createdAt
+                    }
                   }
                 }
               }
             }
           }
         }
+      `;
+
+      const response = await fetch(`https://${shop}/admin/api/2024-04/graphql.json`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+        body: JSON.stringify({ query }),
+      });
+
+      const { data, errors } = await response.json();
+
+      if (errors) {
+        console.error("GraphQL error:", errors);
+        return res.status(500).json({ error: "Error fetching orders" });
       }
-    `;
 
-    const graphqlRes = await fetch(`https://${shop}/admin/api/2024-04/graphql.json`, {
-      method: "POST",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query }),
-    });
+      const orders = data.orders.edges;
+      for (const edge of orders) {
+        const order = edge.node;
+        if (order.email.toLowerCase().trim() === email.toLowerCase().trim()) {
+          foundOrder = order;
+          break;
+        }
+      }
 
-    const { data, errors } = await graphqlRes.json();
-    if (errors) {
-      console.error("GraphQL Errors:", errors);
-      return res.status(500).json({ error: "Error fetching orders" });
+      hasNextPage = data.orders.pageInfo.hasNextPage;
+      endCursor = data.orders.pageInfo.endCursor;
     }
 
-    const orders = data.orders.edges;
-    if (!orders.length) {
+    if (!foundOrder) {
       return res.status(404).json({ error: "No orders found for that email" });
     }
 
-    const order = orders[0].node; // Use most recent
-    const events = order.events.edges.map(e => e.node);
+    const createdAt = new Date(foundOrder.createdAt);
+    const now = new Date();
+    const hoursElapsed = Math.floor((now - createdAt) / (1000 * 60 * 60));
+
+    const events = foundOrder.events.edges.map(e => e.node);
     const deliveryEvent = events.find(e =>
       e.message?.toLowerCase().includes("portrait") || e.message?.includes("http")
     );
@@ -72,16 +96,12 @@ export default async function handler(req, res) {
     const deliveryMessage = deliveryEvent?.message || "";
     const deliveryDate = deliveryEvent?.createdAt || "";
 
-    const createdAt = new Date(order.createdAt);
-    const now = new Date();
-    const hoursElapsed = Math.floor((now - createdAt) / (1000 * 60 * 60));
-
     return res.status(200).json({
-      order_number: order.name,
-      email: order.email,
-      order_date: order.createdAt,
-      total_price: order.totalPriceSet.shopMoney.amount,
-      currency: order.totalPriceSet.shopMoney.currencyCode,
+      order_number: foundOrder.name,
+      email: foundOrder.email,
+      order_date: foundOrder.createdAt,
+      total_price: foundOrder.totalPriceSet.shopMoney.amount,
+      currency: foundOrder.totalPriceSet.shopMoney.currencyCode,
       hours_elapsed: hoursElapsed,
       portrait_delivered: !!portraitLink,
       portrait_link: portraitLink,
@@ -90,8 +110,8 @@ export default async function handler(req, res) {
       status: portraitLink ? "complete" : "in_progress"
     });
 
-  } catch (err) {
-    console.error("Error:", err);
+  } catch (error) {
+    console.error("Fatal error:", error);
     return res.status(500).json({ error: "Internal server error" });
   }
 }
