@@ -1,65 +1,83 @@
-import Shopify from 'shopify-api-node';
-
-const shopify = new Shopify({
-  shopName: process.env.SHOPIFY_STORE_NAME,
-  accessToken: process.env.SHOPIFY_ACCESS_TOKEN,
-  apiVersion: '2023-10'
-});
+// pages/api/track-order.js
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   const { orderNumber, email } = req.body;
 
   if (!orderNumber || !email) {
-    return res.status(400).json({ error: 'Order number and email are required' });
+    return res.status(400).json({ error: "Missing order number or email" });
   }
 
+  const shop = process.env.SHOPIFY_SHOP;
+  const accessToken = process.env.SHOPIFY_ADMIN_API_ACCESS_TOKEN;
+
+  const limit = 250;
+  let foundOrder = null;
+
   try {
-    let allOrders = [];
-    let pageInfo = null;
+    let url = `https://${shop}/admin/api/2023-07/orders.json?limit=${limit}&status=any`;
 
-    // Keep paginating through all orders that match the email
-    do {
-      const params = {
-        email,
-        limit: 250,
-        ...(pageInfo ? { page_info: pageInfo } : {})
-      };
+    while (url) {
+      const response = await fetch(url, {
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+      });
 
-      const response = await shopify.order.list(params);
-      allOrders = allOrders.concat(response);
+      const data = await response.json();
 
-      // Check if there's a next page
-      pageInfo = shopify.order.pagination.nextPageParameters(response);
-    } while (pageInfo);
+      if (!data.orders || data.orders.length === 0) break;
 
-    // Search for matching order number
-    const order = allOrders.find(
-      (o) => o.order_number.toString() === orderNumber.toString()
-    );
+      for (const order of data.orders) {
+        if (
+          order.order_number.toString() === orderNumber.toString() &&
+          order.email.toLowerCase().trim() === email.toLowerCase().trim()
+        ) {
+          foundOrder = order;
+          break;
+        }
+      }
 
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found or email does not match' });
+      if (foundOrder) break;
+
+      // Check for next page
+      const linkHeader = response.headers.get("link");
+      const nextLinkMatch = linkHeader && linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+      url = nextLinkMatch ? nextLinkMatch[1] : null;
     }
 
+    if (!foundOrder) {
+      return res.status(404).json({ error: "Order not found or email does not match" });
+    }
+
+    const timeNow = new Date();
+    const createdAt = new Date(foundOrder.created_at);
+    const hoursElapsed = Math.floor((timeNow - createdAt) / 1000 / 60 / 60);
+
+    const portraitDelivered = foundOrder.tags.includes("portrait_delivered");
+    const portraitLink = foundOrder.note_attributes.find(attr => attr.name === "portrait_link")?.value || "";
+    const deliveryDate = foundOrder.note_attributes.find(attr => attr.name === "delivery_date")?.value || "";
+    const deliveryMessage = foundOrder.note_attributes.find(attr => attr.name === "delivery_message")?.value || "";
+
     return res.status(200).json({
-      order_number: order.order_number,
-      email: order.email,
-      order_date: order.created_at,
-      total_price: order.total_price,
-      currency: order.currency,
-      hours_elapsed: Math.floor((Date.now() - new Date(order.created_at)) / 3600000),
-      portrait_delivered: order.tags.includes('portrait_sent'),
-      delivery_message: order.note || '',
-      portrait_link: order.note_attributes.find(n => n.name === 'portrait_link')?.value || '',
-      delivery_date: order.note_attributes.find(n => n.name === 'delivery_date')?.value || '',
-      status: order.tags.includes('portrait_sent') ? 'delivered' : 'in_progress'
+      order_number: foundOrder.order_number,
+      email: foundOrder.email,
+      order_date: foundOrder.created_at,
+      total_price: foundOrder.total_price,
+      currency: foundOrder.currency,
+      hours_elapsed: hoursElapsed,
+      portrait_delivered: portraitDelivered,
+      portrait_link: portraitLink,
+      delivery_date: deliveryDate,
+      delivery_message: deliveryMessage,
+      status: portraitDelivered ? "complete" : "in_progress",
     });
   } catch (error) {
-    console.error('Shopify error:', error);
-    return res.status(500).json({ error: 'Server error' });
+    console.error("API error:", error);
+    return res.status(500).json({ error: "Internal server error" });
   }
 }
