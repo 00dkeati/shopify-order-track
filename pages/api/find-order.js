@@ -114,11 +114,10 @@ export default async function handler(req, res) {
       endCursor = pageInfo.endCursor;
     }
 
-    // --- LITMUS TEST CHANGE ---
+    // --- NEW FILENAME LITMUS TEST ---
     // If no orders are found, we return this very specific message.
-    // This will prove whether the latest code is actually running on the server.
     if (allMatchingOrders.length === 0) {
-      return res.status(404).json({ error: 'LITMUS_TEST_V4: No orders found. If you see this, the new code is running correctly.' });
+      return res.status(404).json({ error: 'NEW_ENDPOINT_TEST: No orders found. If you see this, the new find-order.js endpoint is working.' });
     }
 
     const formattedOrders = allMatchingOrders.map(order => {
