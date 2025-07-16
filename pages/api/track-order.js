@@ -19,67 +19,87 @@ export default async function handler(req, res) {
     }
 
     const cleanOrderNumber = orderNumber.replace('#', '').trim();
-    const lowerEmail = email.toLowerCase();
+    const headers = {
+      'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+      'Content-Type': 'application/json'
+    };
+
     let order = null;
 
-    // Method 1: Try strict match with encoded hash
+    // --- Method 1: Direct name match (fastest) ---
     try {
-      const res1 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?name=%23${cleanOrderNumber}&limit=50`, {
-        headers: {
-          'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-          'Content-Type': 'application/json'
-        }
-      });
+      const res1 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?name=%23${cleanOrderNumber}&limit=50`, { headers });
       const data1 = await res1.json();
-      order = data1.orders?.find(o => o.email?.toLowerCase() === lowerEmail);
+      order = data1.orders?.find(o => o.email?.toLowerCase() === email.toLowerCase());
     } catch (e) {
       console.log('Search method 1 failed:', e.message);
     }
 
-    // Method 2: Try unencoded name (Shopify sometimes returns results here too)
-    if (!order) {
-      try {
-        const res2 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?name=${cleanOrderNumber}&limit=50`, {
-          headers: {
-            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-            'Content-Type': 'application/json'
-          }
-        });
-        const data2 = await res2.json();
-        order = data2.orders?.find(o => o.email?.toLowerCase() === lowerEmail);
-      } catch (e) {
-        console.log('Search method 2 failed:', e.message);
-      }
-    }
-
-    // Method 3: Fallback – search all orders from last 90 days
+    // --- Method 2: Paginated search in last 90 days ---
     if (!order) {
       try {
         const fromDate = new Date();
         fromDate.setDate(fromDate.getDate() - 90);
         const isoDate = fromDate.toISOString();
 
-        const res3 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?status=any&created_at_min=${isoDate}&limit=250`, {
-          headers: {
-            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-            'Content-Type': 'application/json'
-          }
-        });
-        const data3 = await res3.json();
+        let page = 1;
+        let keepGoing = true;
 
-        order = data3.orders?.find(o =>
-          (o.order_number?.toString() === cleanOrderNumber ||
-           o.name === `#${cleanOrderNumber}` ||
-           o.name === cleanOrderNumber) &&
-          o.email?.toLowerCase() === lowerEmail
-        );
+        while (keepGoing) {
+          const res2 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?status=any&limit=250&created_at_min=${isoDate}&page_info=${page}`, { headers });
+          const data2 = await res2.json();
+
+          if (!data2.orders || data2.orders.length === 0) break;
+
+          const match = data2.orders.find(o =>
+            (o.order_number?.toString() === cleanOrderNumber || o.name?.replace('#', '') === cleanOrderNumber) &&
+            o.email?.toLowerCase() === email.toLowerCase()
+          );
+          if (match) {
+            order = match;
+            break;
+          }
+
+          keepGoing = !!data2.orders.length && data2.orders.length === 250;
+          page++;
+        }
+      } catch (e) {
+        console.log('Search method 2 failed:', e.message);
+      }
+    }
+
+    // --- Method 3: Paginated email search ---
+    if (!order) {
+      try {
+        let page = 1;
+        let keepGoing = true;
+
+        while (keepGoing) {
+          const res3 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?status=any&limit=250&email=${encodeURIComponent(email)}&page_info=${page}`, { headers });
+          const data3 = await res3.json();
+
+          if (!data3.orders || data3.orders.length === 0) break;
+
+          const match = data3.orders.find(o =>
+            (o.order_number?.toString() === cleanOrderNumber || o.name?.replace('#', '') === cleanOrderNumber)
+          );
+          if (match) {
+            order = match;
+            break;
+          }
+
+          keepGoing = !!data3.orders.length && data3.orders.length === 250;
+          page++;
+        }
       } catch (e) {
         console.log('Search method 3 failed:', e.message);
       }
     }
 
+    // --- No match ---
     if (!order) return res.status(404).json({ error: 'Order not found or email does not match' });
 
+    // --- Check product is a portrait ---
     const hasPortraitProduct = order.line_items?.some(item =>
       item.title?.toLowerCase().includes('portrait') ||
       item.product_type?.toLowerCase().includes('portrait') ||
@@ -90,21 +110,14 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Order found, but no portrait product detected' });
     }
 
+    // --- Check if portrait has been delivered ---
     let portraitDeliveryNote = null;
-
     try {
-      const eventsRes = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders/${order.id}/events.json`, {
-        headers: {
-          'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-          'Content-Type': 'application/json'
-        }
-      });
+      const eventsRes = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders/${order.id}/events.json`, { headers });
       const eventsData = await eventsRes.json();
       const matchedEvent = eventsData.events?.find(e =>
-        e.message?.toLowerCase().includes('portrait') ||
-        e.message?.includes('http')
+        e.message?.toLowerCase().includes('portrait') || e.message?.includes('http')
       );
-
       if (matchedEvent) {
         portraitDeliveryNote = matchedEvent.message;
       }
