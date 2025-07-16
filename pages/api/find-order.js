@@ -1,4 +1,15 @@
 export default async function handler(req, res) {
+  // --- CORS Preflight Handling ---
+  // This block handles the browser's preflight OPTIONS request and sets the
+  // necessary CORS headers for all responses. This is a more robust method
+  // than using vercel.json for this specific use case.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   // --- Basic Validation ---
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -114,10 +125,8 @@ export default async function handler(req, res) {
       endCursor = pageInfo.endCursor;
     }
 
-    // --- NEW FILENAME LITMUS TEST ---
-    // If no orders are found, we return this very specific message.
     if (allMatchingOrders.length === 0) {
-      return res.status(404).json({ error: 'NEW_ENDPOINT_TEST: No orders found. If you see this, the new find-order.js endpoint is working.' });
+      return res.status(404).json({ error: 'No orders found for the provided details. The API is working correctly.' });
     }
 
     const formattedOrders = allMatchingOrders.map(order => {
