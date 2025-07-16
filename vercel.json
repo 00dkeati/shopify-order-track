@@ -2,14 +2,14 @@
   "version": 2,
   "builds": [
     {
-      "src": "pages/api/find-order.js",
+      "src": "pages/api/track-order.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
-      "src": "/api/find-order",
-      "dest": "pages/api/find-order.js",
+      "src": "/api/track-order",
+      "dest": "pages/api/track-order.js",
       "methods": ["POST", "OPTIONS"],
       "headers": {
         "Access-Control-Allow-Origin": "*",
@@ -19,5 +19,3 @@
     }
   ]
 }
-
-
