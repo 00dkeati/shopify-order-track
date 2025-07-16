@@ -7,6 +7,7 @@ const app = express();
 
 // Enable CORS for your Shopify store domain
 app.use(cors({
+  app.use(cors({
     origin: ['https://your-store.myshopify.com', 'https://your-custom-domain.com']
 }));
 
