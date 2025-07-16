@@ -1,3 +1,4 @@
+// Updated for Shopify integration - v2
 // Vercel API Route: /api/track-order.js
 export default async function handler(req, res) {
   // Enable CORS
