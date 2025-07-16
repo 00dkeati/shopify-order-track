@@ -93,9 +93,6 @@ export default async function handler(req, res) {
 
       const json = await response.json();
 
-      // --- ENHANCED ERROR HANDLING ---
-      // If Shopify returns any errors in its response, send them back to the client.
-      // This is crucial for debugging permissions or query syntax issues.
       if (json.errors) {
         console.error('Shopify API Errors:', JSON.stringify(json.errors, null, 2));
         return res.status(502).json({ 
@@ -117,8 +114,11 @@ export default async function handler(req, res) {
       endCursor = pageInfo.endCursor;
     }
 
+    // --- LITMUS TEST CHANGE ---
+    // If no orders are found, we return this very specific message.
+    // This will prove whether the latest code is actually running on the server.
     if (allMatchingOrders.length === 0) {
-      return res.status(404).json({ error: 'No orders found matching the provided details.' });
+      return res.status(404).json({ error: 'LITMUS_TEST_V4: No orders found. If you see this, the new code is running correctly.' });
     }
 
     const formattedOrders = allMatchingOrders.map(order => {
@@ -154,7 +154,6 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error('API handler error:', error);
-    // Also enhance the catch block to return the error message.
     return res.status(500).json({ 
         error: 'Internal server error',
         details: error.message 
