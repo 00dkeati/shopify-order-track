@@ -13,20 +13,19 @@ export default async function handler(req, res) {
   const shop = process.env.SHOPIFY_SHOP;
   const accessToken = process.env.SHOPIFY_ADMIN_API_ACCESS_TOKEN;
 
+  // Check if environment variables are loaded
+  if (!shop || !accessToken) {
+    console.error('Missing Shopify environment variables');
+    return res.status(500).json({ error: 'Server configuration error.' });
+  }
+
   // --- Build the Shopify Search Query ---
-  // This is the key change. We build a query string to filter orders on Shopify's side.
-  
-  // CRUCIAL FIX: We add "status:any" to the query. By default, Shopify's order search
-  // may only target 'open' orders. "status:any" explicitly tells Shopify to search
-  // across ALL orders, including 'closed' and 'archived' ones, which is essential
-  // for finding historical purchases.
   const queryParts = [
     `email:'${email.trim()}'`,
     'status:any'
   ];
 
   if (orderNumber) {
-    // Shopify's order name often includes a '#' prefix. We format it correctly.
     const formattedOrderNumber = orderNumber.startsWith('#') ? orderNumber : `#${orderNumber}`;
     queryParts.push(`name:'${formattedOrderNumber.trim()}'`);
   }
@@ -38,11 +37,7 @@ export default async function handler(req, res) {
   let endCursor = null;
 
   try {
-    // --- Paginate Through Matching Orders ---
-    // We loop until we have all pages of orders that match our filterQuery.
     while (hasNextPage) {
-      // The GraphQL query now includes the `query` argument to filter results.
-      // We also use GraphQL variables for better security and syntax.
       const query = `
         query($cursor: String, $filterQuery: String!) {
           orders(first: 50, after: $cursor, query: $filterQuery, sortKey: CREATED_AT, reverse: true) {
@@ -98,9 +93,15 @@ export default async function handler(req, res) {
 
       const json = await response.json();
 
+      // --- ENHANCED ERROR HANDLING ---
+      // If Shopify returns any errors in its response, send them back to the client.
+      // This is crucial for debugging permissions or query syntax issues.
       if (json.errors) {
         console.error('Shopify API Errors:', JSON.stringify(json.errors, null, 2));
-        throw new Error('Failed to fetch from Shopify API.');
+        return res.status(502).json({ 
+            error: 'An error occurred with the Shopify API.',
+            shopify_errors: json.errors 
+        });
       }
       
       if (!json.data || !json.data.orders) {
@@ -110,19 +111,16 @@ export default async function handler(req, res) {
 
       const { edges, pageInfo } = json.data.orders;
       
-      // Add the orders from the current page to our list
       allMatchingOrders.push(...edges.map(edge => edge.node));
 
       hasNextPage = pageInfo.hasNextPage;
       endCursor = pageInfo.endCursor;
     }
 
-    // --- Process and Return Found Orders ---
     if (allMatchingOrders.length === 0) {
       return res.status(404).json({ error: 'No orders found matching the provided details.' });
     }
 
-    // Map the raw order data to a cleaner format for the frontend.
     const formattedOrders = allMatchingOrders.map(order => {
         const createdAt = new Date(order.createdAt);
         const now = new Date();
@@ -135,7 +133,6 @@ export default async function handler(req, res) {
 
         const portraitLink = deliveryEvent?.message?.match(/https?:\/\/\S+/)?.[0] || '';
         
-        // Also check fulfillments for tracking info, which is a more standard place for it.
         const trackingInfo = order.fulfillments[0]?.trackingInfo[0];
 
         return {
@@ -153,13 +150,14 @@ export default async function handler(req, res) {
         };
     });
 
-    // Return all matching orders. The frontend can decide to show the most recent,
-    // or list all of them if multiple are found.
     return res.status(200).json({ orders: formattedOrders });
 
   } catch (error) {
     console.error('API handler error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    // Also enhance the catch block to return the error message.
+    return res.status(500).json({ 
+        error: 'Internal server error',
+        details: error.message 
+    });
   }
 }
-
