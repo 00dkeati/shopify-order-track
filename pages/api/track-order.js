@@ -18,11 +18,26 @@ export default async function handler(req, res) {
   }
 
   try {
-    // ✅ Fetch all orders with matching email
-    const emailOrders = await shopify.order.list({ email, limit: 250 });
+    let allOrders = [];
+    let pageInfo = null;
 
-    // 🔍 Find the order with the matching order number
-    const order = emailOrders.find(
+    // Keep paginating through all orders that match the email
+    do {
+      const params = {
+        email,
+        limit: 250,
+        ...(pageInfo ? { page_info: pageInfo } : {})
+      };
+
+      const response = await shopify.order.list(params);
+      allOrders = allOrders.concat(response);
+
+      // Check if there's a next page
+      pageInfo = shopify.order.pagination.nextPageParameters(response);
+    } while (pageInfo);
+
+    // Search for matching order number
+    const order = allOrders.find(
       (o) => o.order_number.toString() === orderNumber.toString()
     );
 
@@ -30,7 +45,6 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Order not found or email does not match' });
     }
 
-    // ✅ Format response
     return res.status(200).json({
       order_number: order.order_number,
       email: order.email,
