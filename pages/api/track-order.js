@@ -15,14 +15,23 @@ export default async function handler(req, res) {
 
   // --- Build the Shopify Search Query ---
   // This is the key change. We build a query string to filter orders on Shopify's side.
-  // This is far more efficient than fetching all orders.
-  let filterQuery = `email:'${email.trim()}'`;
+  
+  // CRUCIAL FIX: We add "status:any" to the query. By default, Shopify's order search
+  // may only target 'open' orders. "status:any" explicitly tells Shopify to search
+  // across ALL orders, including 'closed' and 'archived' ones, which is essential
+  // for finding historical purchases.
+  const queryParts = [
+    `email:'${email.trim()}'`,
+    'status:any'
+  ];
+
   if (orderNumber) {
-    // Shopify's order name often includes a '#' prefix which should be included if the user provides it.
-    // We handle cases where the user might add it or not.
+    // Shopify's order name often includes a '#' prefix. We format it correctly.
     const formattedOrderNumber = orderNumber.startsWith('#') ? orderNumber : `#${orderNumber}`;
-    filterQuery += ` AND name:'${formattedOrderNumber.trim()}'`;
+    queryParts.push(`name:'${formattedOrderNumber.trim()}'`);
   }
+
+  const filterQuery = queryParts.join(' AND ');
 
   let allMatchingOrders = [];
   let hasNextPage = true;
@@ -90,7 +99,7 @@ export default async function handler(req, res) {
       const json = await response.json();
 
       if (json.errors) {
-        console.error('Shopify API Errors:', json.errors);
+        console.error('Shopify API Errors:', JSON.stringify(json.errors, null, 2));
         throw new Error('Failed to fetch from Shopify API.');
       }
       
@@ -153,3 +162,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
+
