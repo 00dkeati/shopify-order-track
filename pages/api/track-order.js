@@ -51,8 +51,31 @@ export default async function handler(req, res) {
 
     if (!order) {
       try {
-        const res3 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?limit=250&status=any`, {
-          headers: {
+// Method 3: Search all recent orders from last 90 days
+if (!order) {
+  try {
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 90); // 90 days back
+    const isoDate = fromDate.toISOString();
+
+    const res3 = await fetch(`https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?status=any&created_at_min=${isoDate}`, {
+      headers: {
+        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const data3 = await res3.json();
+    order = data3.orders?.find(o =>
+      (o.order_number?.toString() === cleanOrderNumber ||
+       o.name === `#${cleanOrderNumber}` ||
+       o.name === cleanOrderNumber) &&
+      o.email?.toLowerCase() === email.toLowerCase()
+    );
+  } catch (e) {
+    console.log('Search method 3 failed:', e.message);
+  }
+}          headers: {
             'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
             'Content-Type': 'application/json'
           }
