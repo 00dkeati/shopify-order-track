@@ -1,7 +1,7 @@
-// Updated for Shopify integration - v2
-// Vercel API Route: /api/track-order.js
+// WORKING API SOLUTION - Replace your /api/track-order.js with this exact code
+
 export default async function handler(req, res) {
-  // Enable CORS
+  // Handle CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -21,59 +21,45 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Order number and email are required' });
     }
 
-    // Get Shopify credentials from environment variables
-    const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE;
+    // Get environment variables
+    const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
     const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
-    if (!SHOPIFY_STORE_URL || !SHOPIFY_ACCESS_TOKEN) {
+    if (!SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
       console.error('Missing Shopify configuration');
       return res.status(500).json({ error: 'Server configuration error' });
     }
 
-    // Search for the order in Shopify
-    const orderData = await findShopifyOrder(orderNumber, email, SHOPIFY_STORE_URL, SHOPIFY_ACCESS_TOKEN);
+    // Clean order number
+    const cleanOrderNumber = orderNumber.replace('#', '');
+    
+    // Shopify API call
+    const shopifyUrl = `https://${SHOPIFY_STORE}/admin/api/2023-10/orders.json?name=%23${cleanOrderNumber}&limit=1`;
+    
+    const shopifyResponse = await fetch(shopifyUrl, {
+      method: 'GET',
+      headers: {
+        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+        'Content-Type': 'application/json'
+      }
+    });
 
-    if (!orderData) {
+    if (!shopifyResponse.ok) {
+      console.error('Shopify API error:', shopifyResponse.status);
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    res.status(200).json(orderData);
-
-  } catch (error) {
-    console.error('Error tracking order:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-}
-
-async function findShopifyOrder(orderNumber, email, storeUrl, accessToken) {
-  try {
-    const cleanOrderNumber = orderNumber.replace('#', '');
-    const apiUrl = `https://${storeUrl}/admin/api/2023-10/orders.json?name=%23${cleanOrderNumber}&limit=1`;
-
-    const response = await fetch(apiUrl, {
-      method: 'GET',
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      }
-    } );
-
-    if (!response.ok) {
-      console.error('Shopify API error:', response.status);
-      return null;
-    }
-
-    const data = await response.json();
+    const shopifyData = await shopifyResponse.json();
     
-    if (!data.orders || data.orders.length === 0) {
-      return null;
+    if (!shopifyData.orders || shopifyData.orders.length === 0) {
+      return res.status(404).json({ error: 'Order not found' });
     }
 
-    const order = data.orders[0];
+    const order = shopifyData.orders[0];
 
     // Verify email matches
     if (order.email?.toLowerCase() !== email.toLowerCase()) {
-      return null;
+      return res.status(404).json({ error: 'Order not found' });
     }
 
     // Check if it's a portrait order
@@ -83,7 +69,7 @@ async function findShopifyOrder(orderNumber, email, storeUrl, accessToken) {
     );
 
     if (!hasPortraitProduct) {
-      return null;
+      return res.status(404).json({ error: 'Order not found' });
     }
 
     // Calculate hours elapsed
@@ -91,10 +77,11 @@ async function findShopifyOrder(orderNumber, email, storeUrl, accessToken) {
     const now = new Date();
     const hoursElapsed = Math.floor((now - orderDate) / (1000 * 60 * 60));
 
-    // Determine portrait status
+    // Determine status
     const isFulfilled = order.fulfillment_status === 'fulfilled';
     
-    return {
+    // Return success response
+    return res.status(200).json({
       order_number: cleanOrderNumber,
       email: order.email,
       order_date: order.created_at,
@@ -105,10 +92,11 @@ async function findShopifyOrder(orderNumber, email, storeUrl, accessToken) {
       delivery_date: isFulfilled ? order.updated_at : null,
       portrait_link: null,
       hours_elapsed: hoursElapsed
-    };
+    });
 
   } catch (error) {
-    console.error('Error fetching from Shopify:', error);
-    return null;
+    console.error('API Error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }
+
