@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "api/track-order.js", "use": "@vercel/node" },
+    { "src": "api/health.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    {
+      "src": "/api/track-order",
+      "dest": "api/track-order.js",
+      "methods": ["POST", "OPTIONS"],
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+      }
+    },
+    {
+      "src": "/api/health",
+      "dest": "api/health.js",
+      "methods": ["GET"]
+    }
+  ]
+}
