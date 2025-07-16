@@ -9,8 +9,15 @@
   "routes": [
     {
       "src": "/api/find-order",
-      "dest": "pages/api/find-order.js"
+      "dest": "pages/api/find-order.js",
+      "methods": ["POST", "OPTIONS"],
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+      }
     }
   ]
 }
+
 
