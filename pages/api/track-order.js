@@ -2,127 +2,96 @@ import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Only POST allowed' });
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const { orderNumber, email } = req.body;
 
-  const shop = process.env.SHOPIFY_STORE;
-  const token = process.env.SHOPIFY_ACCESS_TOKEN;
-
-  if (!shop || !token) {
-    return res.status(500).json({ error: 'Missing env variables' });
+  if (!orderNumber || !email) {
+    return res.status(400).json({ error: 'Missing orderNumber or email' });
   }
 
-  const graphqlEndpoint = `https://${shop}/admin/api/2024-01/graphql.json`;
+  const formattedOrderNumber = `#${orderNumber}`;
 
-  let hasNextPage = true;
-  let cursor = null;
-  let foundOrder = null;
+  const shopifyStore = process.env.SHOPIFY_STORE_DOMAIN;
+  const accessToken = process.env.SHOPIFY_ADMIN_API_ACCESS_TOKEN;
 
-  while (hasNextPage && !foundOrder) {
-    const query = `
-      {
-        orders(first: 100${cursor ? `, after: "${cursor}"` : ''}) {
-          pageInfo {
-            hasNextPage
-          }
-          edges {
-            cursor
-            node {
-              name
-              email
-              createdAt
-              id
-              lineItems(first: 5) {
-                edges {
-                  node {
-                    title
-                    product {
-                      title
-                    }
-                  }
+  const query = `
+    query getOrderByNumber($orderName: String!) {
+      orders(first: 1, query: $orderName) {
+        edges {
+          node {
+            name
+            email
+            createdAt
+            id
+            lineItems(first: 10) {
+              edges {
+                node {
+                  title
+                  variantTitle
                 }
               }
-              events(first: 10) {
-                edges {
-                  node {
-                    message
-                    createdAt
-                  }
+            }
+            events(first: 5) {
+              edges {
+                node {
+                  message
                 }
               }
             }
           }
         }
       }
-    `;
+    }
+  `;
 
-    const response = await fetch(graphqlEndpoint, {
+  const variables = {
+    orderName: `name:${formattedOrderNumber}`,
+  };
+
+  try {
+    const response = await fetch(`https://${shopifyStore}/admin/api/2024-01/graphql.json`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': token,
+        'X-Shopify-Access-Token': accessToken,
       },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, variables }),
     });
 
-    const data = await response.json();
+    const result = await response.json();
 
-    const orders = data?.data?.orders?.edges;
+    const orderEdges = result?.data?.orders?.edges;
 
-    for (const edge of orders) {
-      const order = edge.node;
-      const orderNumStr = order.name.replace('#', '');
-      if (
-        orderNumStr === String(orderNumber) &&
-        order.email.toLowerCase() === email.toLowerCase()
-      ) {
-        foundOrder = order;
-        break;
-      }
+    if (!orderEdges || orderEdges.length === 0) {
+      return res.status(404).json({ error: 'Order not found or email does not match' });
     }
 
-    hasNextPage = data.data.orders.pageInfo.hasNextPage;
-    cursor = orders[orders.length - 1]?.cursor;
-  }
+    const order = orderEdges[0].node;
 
-  if (!foundOrder) {
-    return res.status(404).json({ error: 'Order not found or email does not match' });
-  }
-
-  // Extract portrait delivery info if exists
-  let portraitLink = '';
-  let deliveryDate = '';
-  let message = '';
-  let delivered = false;
-
-  for (const eventEdge of foundOrder.events.edges) {
-    const msg = eventEdge.node.message;
-    if (msg.includes('https://') && msg.includes('portrait')) {
-      portraitLink = msg.match(/https?:\/\/[^\s"]+/)?.[0];
-      deliveryDate = eventEdge.node.createdAt;
-      delivered = true;
-      message = msg;
-      break;
+    if (order.email.toLowerCase() !== email.toLowerCase()) {
+      return res.status(403).json({ error: 'Order not found or email does not match' });
     }
+
+    const orderCreated = new Date(order.createdAt);
+    const hoursElapsed = Math.floor((Date.now() - orderCreated.getTime()) / (1000 * 60 * 60));
+
+    return res.status(200).json({
+      order_number: order.name.replace('#', ''),
+      email: order.email,
+      order_date: order.createdAt,
+      total_price: 'Unknown', // Update if you want to include
+      currency: 'GBP', // Optional
+      hours_elapsed: hoursElapsed,
+      portrait_delivered: false,
+      delivery_message: '',
+      portrait_link: '',
+      delivery_date: '',
+      status: 'in_progress',
+    });
+  } catch (err) {
+    console.error('Shopify API error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  const createdDate = new Date(foundOrder.createdAt);
-  const now = new Date();
-  const hoursElapsed = Math.floor((now - createdDate) / (1000 * 60 * 60));
-
-  res.status(200).json({
-    order_number: orderNumber,
-    email: foundOrder.email,
-    order_date: foundOrder.createdAt,
-    total_price: foundOrder.totalPrice || 'N/A',
-    currency: 'GBP',
-    hours_elapsed: hoursElapsed,
-    portrait_delivered: delivered,
-    delivery_message: message,
-    portrait_link: portraitLink,
-    delivery_date: deliveryDate,
-    status: delivered ? 'delivered' : 'in_progress'
-  });
 }
